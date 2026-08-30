@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_input_hint">发消息或输入 / 提问</string>
+    <string name="editor_send">发送</string>
+</resources>

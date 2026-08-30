@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:parentTag="android.widget.LinearLayout">
+
+    <com.ekko.editor.ChipEditText
+        android:id="@+id/editorInput"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:background="@null"
+        android:focusableInTouchMode="true"
+        android:gravity="top|start"
+        android:hint="@string/editor_input_hint"
+        android:imeOptions="flagNoExtractUi"
+        android:inputType="textCapSentences|textMultiLine"
+        android:maxLines="8"
+        android:minLines="1"
+        android:overScrollMode="ifContentScrolls"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="6dp"
+        android:scrollbars="vertical"
+        android:textColor="#FF1A1A1A"
+        android:textColorHint="#FF999999"
+        android:textSize="15sp"
+        tools:ignore="LabelFor" />
+
+    <ImageButton
+        android:id="@+id/editorSendButton"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="bottom"
+        android:background="@drawable/bg_send_button"
+        android:contentDescription="@string/editor_send"
+        android:padding="11dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_send"
+        android:tint="@color/send_icon_color" />
+
+</merge>
