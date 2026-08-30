@@ -10,6 +10,7 @@ import android.text.Layout
 import android.text.TextPaint
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
+import java.text.BreakIterator
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -78,11 +79,21 @@ class ChipSpan(
     private val closeRect = RectF()
 
     private fun buildDisplayLabel(source: CharSequence): CharSequence {
-        if (Character.codePointCount(source, 0, source.length) <= MAX_LABEL_CHARS) {
-            return source
+        val text = source.toString()
+        // 按字形集群边界截断，避免把 emoji 的 ZWJ 连字/肤色修饰符等从中间切开
+        val iterator = BreakIterator.getCharacterInstance().apply { setText(text) }
+        var count = 0
+        var boundary = iterator.first()
+        while (boundary != BreakIterator.DONE) {
+            val next = iterator.next()
+            if (next == BreakIterator.DONE) break
+            count++
+            boundary = next
+            if (count == MAX_LABEL_CHARS) {
+                return text.substring(0, boundary) + ELLIPSIS
+            }
         }
-        val endIndex = Character.offsetByCodePoints(source, 0, MAX_LABEL_CHARS)
-        return source.subSequence(0, endIndex).toString() + ELLIPSIS
+        return source
     }
 
     private fun computeWidth(): Float {

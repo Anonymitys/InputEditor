@@ -22,6 +22,7 @@ import platform.Foundation.NSCoder
 import platform.Foundation.NSMakeRange
 import platform.Foundation.NSMutableAttributedString
 import platform.Foundation.NSRange
+import platform.Foundation.NSStringEnumerationByComposedCharacterSequences
 import platform.Foundation.NSSelectorFromString
 import platform.Foundation.NSString
 import platform.Foundation.appendAttributedString
@@ -31,6 +32,7 @@ import platform.Foundation.decodeObjectForKey
 import platform.Foundation.deleteCharactersInRange
 import platform.Foundation.encodeObject
 import platform.Foundation.enumerateAttributesInRange
+import platform.Foundation.enumerateSubstringsInRange
 import platform.Foundation.length
 import platform.Foundation.replaceCharactersInRange
 import platform.Foundation.setAttributedString
@@ -852,18 +854,20 @@ private class ChipTextDragDelegate : NSObject(), UITextDragDelegateProtocol {
     ): List<*> = emptyList<Any?>()
 }
 
-/** chip 标签按码点截断，超出 5 个码点补省略号；emoji 代理对不会被截断。 */
+/** chip 标签按字形集群截断，超出 N 个集群补省略号，避免把 emoji/ZWJ 序列截成乱码。 */
 private fun truncateChipLabel(label: String): String {
-    var codePointCount = 0
-    var index = 0
-    while (index < label.length) {
-        if (codePointCount == IosBarMetrics.ChipMaxLabelChars) {
-            return label.substring(0, index) + "…"
-        }
-        codePointCount++
-        index += if (label[index].isHighSurrogate()) 2 else 1
+    val nsLabel = NSString.Companion.create(string = label)
+    // 先按字形集群枚举出每个集群的结束下标，再按前 N 个集群截断；
+    // 避免把 emoji 的 ZWJ 连字/肤色修饰符等复杂序列从中间切开。
+    val clusterEnds = mutableListOf<Int>()
+    nsLabel.enumerateSubstringsInRange(
+        range = NSMakeRange(0uL, nsLabel.length),
+        options = NSStringEnumerationByComposedCharacterSequences,
+    ) { _, range, _, _ ->
+        clusterEnds.add((range.useContents { location } + range.useContents { length }).toInt())
     }
-    return label
+    if (clusterEnds.size <= IosBarMetrics.ChipMaxLabelChars) return label
+    return label.substring(0, clusterEnds[IosBarMetrics.ChipMaxLabelChars - 1]) + "…"
 }
 
 /** 计算 chip 排版宽度，与 Android ChipSpan.computeWidth 一致。 */
