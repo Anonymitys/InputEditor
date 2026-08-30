@@ -64,6 +64,7 @@ import platform.UIKit.UIImageRenderingMode
 import platform.UIKit.UILabel
 import platform.UIKit.UILongPressGestureRecognizer
 import platform.UIKit.UIMenuController
+import platform.UIKit.UIPasteboard
 import platform.UIKit.UITapGestureRecognizer
 import platform.UIKit.UITextAutocapitalizationType
 import platform.UIKit.UITextGranularity
@@ -198,6 +199,62 @@ private class ChipAttachment : NSTextAttachment {
 }
 
 /**
+ * 复制行为定制：选中内容里的 chip 附件展开成 `[label]` 纯文本再复制，
+ * 否则系统把附件按图片复制，纯文本场景粘贴出来是空的。
+ */
+private class ChipTextView : UITextView {
+
+    /** 剪切完成后通知输入栏刷新文本状态。 */
+    var onCutCompleted: (() -> Unit)? = null
+
+    @ObjCObjectBase.OverrideInit
+    constructor(frame: CValue<CGRect>, textContainer: NSTextContainer?) : super(frame, textContainer)
+
+    @ObjCObjectBase.OverrideInit
+    constructor(coder: NSCoder) : super(coder)
+
+    override fun copy(sender: Any?) {
+        val range = selectedRange
+        if (range.useContents { length } == 0uL) {
+            super.copy(sender)
+            return
+        }
+        UIPasteboard.generalPasteboard().string = plainTextForRange(range)
+    }
+
+    override fun cut(sender: Any?) {
+        val range = selectedRange
+        if (range.useContents { length } == 0uL) {
+            super.cut(sender)
+            return
+        }
+        UIPasteboard.generalPasteboard().string = plainTextForRange(range)
+
+        val current = NSMutableAttributedString()
+        current.setAttributedString(attributedText)
+        current.deleteCharactersInRange(range)
+        attributedText = current
+        selectedRange = NSMakeRange(range.useContents { location }, 0uL)
+        onCutCompleted?.invoke()
+    }
+
+    /** 把选中范围内的 chip 附件展开成 `[label]`，得到可复制的纯文本。 */
+    private fun plainTextForRange(range: CValue<NSRange>): String {
+        val selected = attributedText.attributedSubstringFromRange(range)
+        return buildString {
+            selected.enumerateAttributesInRange(
+                NSMakeRange(0uL, selected.length),
+                options = 0uL,
+            ) { attrs, r, _ ->
+                val attachment = attrs?.get(NSAttachmentAttributeName) as? ChipAttachment
+                val chunk = selected.attributedSubstringFromRange(r).string
+                append(if (attachment != null) "[${attachment.chipLabel}]" else chunk)
+            }
+        }
+    }
+}
+
+/**
  * 输入栏容器（UIKit 原生实现），与 Android 端 DoubaoInputBar 行为一致：
  * - 单行起步，随内容长高，到达 maxLines 后内部滚动；
  * - chip 以附件形式内联，点右上角关闭按钮整块删除；
@@ -250,7 +307,7 @@ internal class IosNativeInputBar : UIView, UIGestureRecognizerDelegateProtocol {
             }
         }
 
-    private val textView: UITextView
+    private val textView: ChipTextView
 
     private val placeholderLabel = UILabel(frame = CGRectMake(0.0, 0.0, 0.0, 0.0)).apply {
         font = IosBarMetrics.bodyFont
@@ -293,11 +350,7 @@ internal class IosNativeInputBar : UIView, UIGestureRecognizerDelegateProtocol {
         delegate = this@IosNativeInputBar
     }
 
-    /**
-     * 长按手势，取代系统长按选词：
-     * - 长按 chip 附件：吞掉，什么都不做（不放大、不选中、不弹菜单）；
-     * - 长按普通文本：选中长按位置的词，弹编辑菜单。
-     */
+    /** 长按手势：chip 与普通文本不做区分，统一按长按位置的词处理。 */
     private val chipLongPressGesture = UILongPressGestureRecognizer(
         target = this,
         action = NSSelectorFromString("handleChipLongPress:"),
@@ -312,9 +365,6 @@ internal class IosNativeInputBar : UIView, UIGestureRecognizerDelegateProtocol {
 
     private var lastReportedHeight = -1.0
 
-    /** 长按手势是否开始于 chip 附件上。 */
-    private var longPressOnChip = false
-
     init {
         val storage = NSTextStorage()
         val layout = NSLayoutManager()
@@ -326,7 +376,7 @@ internal class IosNativeInputBar : UIView, UIGestureRecognizerDelegateProtocol {
         storage.addLayoutManager(layout)
         layout.addTextContainer(container)
 
-        textView = UITextView(
+        textView = ChipTextView(
             frame = CGRectMake(0.0, 0.0, 0.0, 0.0),
             textContainer = container,
         ).apply {
@@ -358,6 +408,7 @@ internal class IosNativeInputBar : UIView, UIGestureRecognizerDelegateProtocol {
             delegate = textDelegate
             addGestureRecognizer(chipTapGesture)
             addGestureRecognizer(chipLongPressGesture)
+            onCutCompleted = { this@IosNativeInputBar.onUserEditedText() }
         }
 
         addSubview(textView)
@@ -529,9 +580,7 @@ internal class IosNativeInputBar : UIView, UIGestureRecognizerDelegateProtocol {
      * 所以不能只在点击处理里判断“还有没有选中”，这里统一兜底收菜单。
      */
     internal fun onSelectionChanged() {
-        if (textView.selectedRange.useContents { length } == 0uL) {
-            UIMenuController.sharedMenuController().setMenuVisible(false, animated = true)
-        }
+
     }
 
     /**
@@ -699,44 +748,22 @@ internal class IosNativeInputBar : UIView, UIGestureRecognizerDelegateProtocol {
         UIMenuController.sharedMenuController().setMenuVisible(false, animated = true)
     }
 
-    /**
-     * 长按手势：
-     * - 长按 chip 附件：吞掉，什么都不做（不放大、不选中、不弹菜单）；
-     * - 长按普通文本：松手（UP）时选中长按位置的词，弹编辑菜单。
-     */
+    /** 长按（松手）时选中长按位置的词；chip 与普通文本走同一套逻辑。 */
     @ObjCAction
     fun handleChipLongPress(sender: UILongPressGestureRecognizer) {
-        when (sender.state) {
-            UIGestureRecognizerStateBegan -> {
-                // 记录长按起点是否落在 chip 上；落在 chip 上则整个手势吞掉
-                longPressOnChip = chipAtPoint(sender.locationInView(textView)) != null
-            }
+        if (sender.state != UIGestureRecognizerStateEnded) return
 
-            UIGestureRecognizerStateEnded -> {
-                if (longPressOnChip) {
-                    longPressOnChip = false
-                    return
-                }
-                val point = sender.locationInView(textView)
-                val position = textView.closestPositionToPoint(point) ?: return
-                val wordRange = textView.tokenizer.rangeEnclosingPosition(
-                    position,
-                    withGranularity = UITextGranularity.UITextGranularityWord,
-                    inDirection = UITextStorageDirectionForward,
-                ) ?: return
-                textView.selectedTextRange = wordRange
-                val menuRect = textView.firstRectForRange(wordRange)
-                UIMenuController.sharedMenuController().setTargetRect(menuRect, inView = textView)
-                UIMenuController.sharedMenuController().setMenuVisible(true, animated = true)
-            }
-
-            UIGestureRecognizerStateCancelled,
-            UIGestureRecognizerStateFailed -> {
-                longPressOnChip = false
-            }
-
-            else -> Unit
-        }
+        val point = sender.locationInView(textView)
+        val position = textView.closestPositionToPoint(point) ?: return
+        val wordRange = textView.tokenizer.rangeEnclosingPosition(
+            position,
+            withGranularity = UITextGranularity.UITextGranularityWord,
+            inDirection = UITextStorageDirectionForward,
+        ) ?: return
+        textView.selectedTextRange = wordRange
+        val menuRect = textView.firstRectForRange(wordRange)
+        UIMenuController.sharedMenuController().setTargetRect(menuRect, inView = textView)
+        UIMenuController.sharedMenuController().setMenuVisible(true, animated = true)
     }
 
     /** 命中检查：返回触摸点落在其上的 (chip, 字符下标)，未命中 chip 区域返回 null。 */
